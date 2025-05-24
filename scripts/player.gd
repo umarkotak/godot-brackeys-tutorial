@@ -1,102 +1,76 @@
 extends CharacterBody2D
 
-const SPEED = 150.0
-const JUMP_VELOCITY = -300.0
-const WALL_JUMP_VELOCITY_Y = -280.0
-const WALL_JUMP_PUSH_X = 140.0
-const WALL_SLIDE_GRAVITY_MULTIPLIER = 0.1
+const SPEED := 120.0
+const JUMP_VELOCITY := -250.0
+const MAX_JUMPS := 2
 
-var max_jump = 2
+const WALL_JUMP_VELOCITY_Y := -250.0
+const WALL_JUMP_HORIZONTAL_ACCELERATION := 150.0
+const WALL_SLIDE_GRAVITY_MULTIPLIER := 0.1
+const MAX_WALL_SLIDE_SPEED := 150.0
 
-var is_after_wall_jump = 0
-var current_jump = 0
+var jumps_made: int = 0
+var wall_jump_source_normal_x: float = 0.0
 
-@onready var animated_sprite: AnimatedSprite2D = $AnimatedSprite2D # Or your actual node name
-
-func _ready():
-	pass
+@onready var animated_sprite: AnimatedSprite2D = $AnimatedSprite2D
 
 func _physics_process(delta: float) -> void:
-	var current_gravity = get_gravity()
+	var effective_gravity = ProjectSettings.get_setting("physics/2d/default_gravity")
+	var input_horizontal = Input.get_axis("ui_left", "ui_right")
 
-	# --- Wall Sliding Logic ---
-	var is_sliding_on_wall = false
-	if is_on_wall() and not is_on_floor() and velocity.y > 0: # Check for downward movement on wall
-		# Optional: Only slide if pressing towards the wall
-		var input_direction_x = Input.get_axis("ui_left", "ui_right")
-		var wall_normal = get_wall_normal()
-		# If wall_normal.x > 0, wall is on the left. If < 0, wall is on the right.
-		# Slide if input is towards the wall or no horizontal input
-		if (wall_normal.x > 0 and input_direction_x < 0) or \
-		   (wall_normal.x < 0 and input_direction_x > 0) or \
-		   input_direction_x == 0: # Allows sliding even without pressing into wall
-			is_sliding_on_wall = true
-			current_gravity *= WALL_SLIDE_GRAVITY_MULTIPLIER # Slower fall
+	var on_floor_now = is_on_floor()
+	var on_wall_now = is_on_wall()
 
-	# Add the gravity.
-	if not is_on_floor():
-		velocity += current_gravity * delta
-	# Optional: Limit max fall speed when wall sliding (if you want a max slide speed)
-	if is_sliding_on_wall:
-		velocity.y = min(velocity.y, 150.0) # Example max wall slide speed
+	if on_floor_now:
+		jumps_made = 0
+		wall_jump_source_normal_x = 0.0
+	elif on_wall_now:
+		jumps_made = 0
 
-	if is_on_floor() or is_on_wall():
-		current_jump = 0
+	var is_sliding = false
+	if on_wall_now and not on_floor_now and velocity.y >= 0:
+		var current_wall_normal = get_wall_normal()
+		if (current_wall_normal.x > 0 and input_horizontal < 0) or \
+		   (current_wall_normal.x < 0 and input_horizontal > 0) or \
+		   input_horizontal == 0:
+			is_sliding = true
+			effective_gravity *= WALL_SLIDE_GRAVITY_MULTIPLIER
+			velocity.y = min(velocity.y, MAX_WALL_SLIDE_SPEED)
 
-	# --- Handle Jump ---
+	if not on_floor_now:
+		velocity.y += effective_gravity * delta
+
 	if Input.is_action_just_pressed("ui_accept"):
-		if current_jump < max_jump:
+		if is_sliding:
+			var current_wall_normal = get_wall_normal()
+			velocity.y = WALL_JUMP_VELOCITY_Y
+			wall_jump_source_normal_x = current_wall_normal.x
+			animated_sprite.flip_h = (wall_jump_source_normal_x < 0)
+			jumps_made = 1
+		elif jumps_made < MAX_JUMPS:
 			velocity.y = JUMP_VELOCITY
-			current_jump += 1
-	
-	#if Input.is_action_just_pressed("ui_accept"):
-		#if is_sliding_on_wall: # Wall Jump
-			#var wall_normal = get_wall_normal()
-			#velocity.y = WALL_JUMP_VELOCITY_Y
-			## Push away from the wall
-			## Flip character on wall jump
-			#is_after_wall_jump = wall_normal.x
-			#if wall_normal.x > 0: # Wall on the left, jumped right
-				#animated_sprite.flip_h = false
-				##velocity.x = WALL_JUMP_PUSH_X
-			#elif wall_normal.x < 0: # Wall on the right, jumped left
-				#animated_sprite.flip_h = true
-				##velocity.x = -1 * WALL_JUMP_PUSH_X
-	
-	
+			jumps_made += 1
+			wall_jump_source_normal_x = 0.0
 
-	# --- Horizontal Movement and Flipping ---
-	var direction := Input.get_axis("ui_left", "ui_right")
-	
-	if direction:
-		velocity.x = direction * SPEED
-		if animated_sprite:
-			animated_sprite.flip_h = (direction < 0) # Flip if moving left
+	if input_horizontal != 0:
+		velocity.x = input_horizontal * SPEED
+		animated_sprite.flip_h = (input_horizontal < 0)
 	else:
-		velocity.x = move_toward(velocity.x, 0, SPEED) # Decelerate
+		velocity.x = move_toward(velocity.x, 0, SPEED)
 
-	if Input.is_action_pressed("ui_accept") && is_after_wall_jump != 0:
-		#velocity.x = is_after_wall_jump * SPEED * 2
-		velocity.x = velocity.x + (is_after_wall_jump * WALL_JUMP_PUSH_X)
-		
-	if is_on_floor():
-		is_after_wall_jump = 0
+	if wall_jump_source_normal_x != 0.0 and Input.is_action_pressed("ui_accept"):
+		velocity.x += wall_jump_source_normal_x * WALL_JUMP_HORIZONTAL_ACCELERATION * delta
 
-	# --- Animation State ---
 	if animated_sprite:
-		if is_on_floor():
-			if abs(velocity.x) > 10.0: # Small threshold to prevent flickering
+		if on_floor_now:
+			if abs(velocity.x) > 10.0:
 				animated_sprite.play("move")
 			else:
 				animated_sprite.play("idle")
-		else: # In the air
-			if is_sliding_on_wall:
-				# You could have a "wall_slide" animation here
-				# animated_sprite.play("wall_slide") 
-				# For now, let's keep it simple, maybe just "idle" or "jump"
+		else:
+			if is_sliding:
 				animated_sprite.play("jump")
-			else: # Fallback if no jump animation
+			else:
 				animated_sprite.play("jump")
-
 
 	move_and_slide()
